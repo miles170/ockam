@@ -1,0 +1,58 @@
+name: Test Draft Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_tag:
+        description: Git Tag To Test From.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test_draft_release:
+    name: Test Binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-22.04
+          target: x86_64-unknown-linux-musl
+          container: ghcr.io/build-trust/ockam-builder@sha256:55b60f7efe2c48c098bd52db2e9dbf0a1b6f6c7e583ff278987d2d11adea04e2
+        - os: macos-12
+          target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+    - name: Download Binary And Signature
+      uses: robinraju/release-downloader@d6de084c58345d09b017e22701dbcf26977cfd14
+      with:
+        repository: miles170/ockam
+        tag: ${{ github.event.inputs.git_tag }}
+        fileName: ockam.${{ matrix.target }}*
+
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@9becc617647dfa20ae7b1151972e9b3a2c338a2b
+
+    - name: Verify Signatures
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSfL -o ockam.pub https://raw.githubusercontent.com/build-trust/ockam/develop/tools/docker/cosign.pub
+        cosign verify-blob --key ockam.pub --signature ockam.${{ matrix.target }}.sig ockam.${{ matrix.target }}
+
+    - name: Check Ockam Version
+      run: ./ockam.${{ matrix.target }} --version
+
+    - name: Checkout repository
+      if: matrix.os == 'ubuntu-22.04'
+      uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8
+      with:
+        fetch-depth: 0
+        ref: ${{ github.event.inputs.git_tag }}
+
+    - name: Run Tests
+      if: matrix.os == 'ubuntu-22.04'
+      run: |
+        export PATH=$(pwd):$PATH;
+        mv ./ockam.${{ matrix.target }} ./ockam
+        bats implementations/rust/ockam/ockam_command/tests/commands.bats
